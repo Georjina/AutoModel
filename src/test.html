@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>示例 06.03 - ExtrudeGeometry</title>
+  <script src="./js/lib/three.js"></script>
+  <script src="js/lib/LineSegments2.js"></script>
+  <script src="js/lib/LineSegmentsGeometry.js"></script>
+  <script src="js/lib/Line2.js"></script>
+  <script src="js/lib/LineGeometry.js"></script>
+  <script src="js/lib/LineMaterial.js"></script>
+  <script src="./js/lib/OrbitControls.js"></script>
+  <script src="./js/lib/ThreeBSP.js"></script>
+  <script src="js/lib/inflate.min.js"></script>
+  <script src="js/lib/FBXLoader.js"></script>
+  <script src="js/lib/DragControls.js"></script>
+  <script src="js/lib/TransformControls.js"></script>
+  <script src="js/lib/Tween.js"></script>
+  <script src="js/lib/jquery-1.11.0.min.js"></script>
+  <script src="js/lib/stats.min.js"></script>
+  <script src="js/lib/dat.gui.min.js"></script>
+  <style>
+    body {
+      /* 设置 margin 为 0，并且 overflow 为 hidden，来完成页面样式 */
+      margin: 0;
+      overflow: hidden;
+    }
+    /* 统计对象的样式 */
+    #Stats-output {
+      position: absolute;
+      left: 0px;
+      top: 0px;
+    }
+  </style>
+</head>
+<body>
+
+<!-- 用于 WebGL 输出的 Div -->
+<div id="webgl-output"></div>
+<!-- 用于统计 FPS 输出的 Div -->
+<div id="stats-output"></div>
+
+<!-- 运行 Three.js 示例的 Javascript 代码 -->
+<script type="text/javascript">
+
+  var scene;
+  var camera;
+  var render;
+  var webglRender;
+  //var canvasRender;
+  var controls;
+  var stats;
+  var guiParams;
+
+  var ground;
+  var extrude;
+
+  var meshMaterial;
+
+  var ambientLight;
+  var spotLight;
+  var axesHelper;
+  //var cameraHelper;
+
+  $(function() {
+    stats = initStats();
+    scene = new THREE.Scene();
+
+    webglRender = new THREE.WebGLRenderer( {antialias: true, alpha: true} ); // antialias 抗锯齿
+    webglRender.setSize(window.innerWidth, window.innerHeight);
+    webglRender.setClearColor(0xeeeeee, 1.0);
+    webglRender.shadowMap.enabled = true; // 允许阴影投射
+    render = webglRender;
+
+    camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.01, 1000); // 2147483647
+    camera.position.set(-45.5, 68.2, 90.9);
+
+    var target = new THREE.Vector3(10, 0 , 0);
+    controls = new THREE.OrbitControls(camera, render.domElement);
+    controls.target = target;
+    camera.lookAt(target);
+
+    $('#webgl-output')[0].appendChild(render.domElement);
+    window.addEventListener('resize', onWindowResize, false);
+
+    // 加入一个坐标轴：X（橙色）、Y（绿色）、Z（蓝色）
+    axesHelper = new THREE.AxesHelper(60);
+    scene.add(axesHelper);
+
+    ambientLight = new THREE.AmbientLight(0x0c0c0c);
+    scene.add(ambientLight);
+
+    spotLight = new THREE.SpotLight(0xffffff);
+    spotLight.position.set(0, 60, 30);
+    spotLight.shadow.mapSize.width = 5120; // 必须是 2的幂，默认值为 512
+    spotLight.shadow.mapSize.height = 5120; // 必须是 2的幂，默认值为 512
+    spotLight.castShadow = true;
+    scene.add(spotLight);
+    //cameraHelper = new THREE.CameraHelper(spotLight.shadow.camera);
+    //scene.add(cameraHelper);
+
+    // 加入一个地面
+    var groundGeometry = new THREE.PlaneGeometry(100, 100, 4, 4);
+    var groundMaterial = new THREE.MeshLambertMaterial({color: 0x777777}); // MeshBasicMaterial 材质不能接收阴影
+    ground = new THREE.Mesh(groundGeometry, groundMaterial);
+    ground.rotation.set(-0.5 * Math.PI, 0, 0); // 沿着 X轴旋转-90°
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    // 材质
+    meshMaterial = [
+      new THREE.MeshNormalMaterial({side: THREE.DoubleSide}),
+      new THREE.MeshBasicMaterial({wireframe: true})
+    ];
+
+    /** 用来保存那些需要修改的变量 */
+    guiParams = new function() {
+      this.rotationSpeed = 0.02;
+
+      this.options = {
+        amount: 10,
+        bevelThinkness: 2,
+        bevelSize: 1,
+        bevelSegments: 3,
+        bevelEnabled: true,
+        curveSegments: 12,
+        steps: 1
+      };
+    }
+    /** 定义 dat.GUI 对象，并绑定 guiParams 的几个属性 */
+    var gui = new dat.GUI();
+    gui.add(guiParams.options, "amount", 0, 20).onChange(function(e){updateMesh()});
+    gui.add(guiParams.options, "bevelThinkness", 0, 10).onChange(function(e){updateMesh()});
+    gui.add(guiParams.options, "bevelSize", 0, 10).onChange(function(e){updateMesh()});
+    gui.add(guiParams.options, "bevelSegments", 0, 30, 1).onChange(function(e){updateMesh()});
+    gui.add(guiParams.options, "bevelEnabled").onChange(function(e){updateMesh()});
+    gui.add(guiParams.options, "curveSegments", 1, 30, 1).onChange(function(e){updateMesh()});
+    gui.add(guiParams.options, "steps", 1, 5, 1).onChange(function(e){updateMesh()});
+
+    updateMesh();
+
+    renderScene();
+  });
+
+  /** 渲染场景 */
+  function renderScene() {
+    stats.update();
+    // rotateMesh(); // 旋转物体
+
+    requestAnimationFrame(renderScene);
+    render.render(scene, camera);
+  }
+
+  /** 初始化 stats 统计对象 */
+  function initStats() {
+    stats = new Stats();
+    stats.setMode(0); // 0 为监测 FPS；1 为监测渲染时间
+    $('#stats-output').append(stats.domElement);
+    return stats;
+  }
+
+  /** 当浏览器窗口大小变化时触发 */
+  function onWindowResize() {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    render.setSize(window.innerWidth, window.innerHeight);
+  }
+
+  /** 旋转物体 */
+  var step = 0;
+  function rotateMesh() {
+    step += guiParams.rotationSpeed;
+    scene.traverse(function(mesh) {
+      if (mesh === extrude) {
+        //mesh.rotation.x = step;
+        mesh.rotation.y = step;
+        //mesh.rotation.z = step;
+      }
+    });
+  }
+
+  function updateMesh() {
+    scene.remove(extrude);
+
+    // 定义 extrude
+    var extrudeGeometry = new THREE.ExtrudeGeometry(drawShape(), guiParams.options);
+    // extrude = new THREE.SceneUtils.createMultiMaterialObject(extrudeGeometry, meshMaterial);
+    extrude = new THREE.Mesh(extrudeGeometry, meshMaterial);
+    // extrude.children[1].castShadow = true; // extrude.children[0] 的材质是 MeshNormalMaterial，不能投射阴影
+    //extrude.position.set(0, guiParams.radius * 2 + 3, 0);
+    scene.add(extrude);
+  }
+
+  /** 绘制二维图形 */
+  function drawShape() {
+    var shape = new THREE.Shape();
+
+    shape.moveTo(10, 10); // moveTo( x, y )
+    shape.lineTo(10, 40); // lineTo( x, y ) - 线
+    shape.bezierCurveTo(15, 25, 25, 25, 30, 40); // bezierCurveTo( cp1X, cp1Y, cp2X, cp2Y, x, y ) - 贝塞尔曲线
+    shape.splineThru([
+      new THREE.Vector2(32, 30),
+      new THREE.Vector2(28, 20),
+      new THREE.Vector2(30, 10)
+    ]); // splineThru ( vector2Array ) - 样条线
+    shape.quadraticCurveTo(20, 15, 10, 10); // quadraticCurveTo( cpX, cpY, x, y ) - 二次曲线
+
+    var hole = new THREE.Path(); // 添加“眼睛”孔洞1
+    hole.absellipse(16, 24, 2, 3, 0, Math.PI * 2, false);
+    shape.holes.push(hole);
+
+    hole = new THREE.Path(); // 添加“眼睛”孔洞2
+    hole.absellipse(23, 24, 2, 3, 0, Math.PI * 2, false);
+    shape.holes.push(hole);
+
+    hole = new THREE.Path(); // 添加“嘴巴”孔洞
+    hole.absarc(20, 16, 2, 0, Math.PI, false);
+    shape.holes.push(hole);
+
+    return shape;
+  }
+
+</script>
+</body>
+</html>
